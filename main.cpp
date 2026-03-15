@@ -77,17 +77,19 @@ void run_mutex_test(const std::vector<int>& data, int num_threads) {
 }
 
 void thread_worker_cas(const std::vector<int>& data, size_t start, size_t end) {
+    int local_counter = 0;
     for (size_t i = start; i < end; ++i) {
         if (data[i] % 3 == 0) {
             int val = data[i];
-
-            int current_count = atomic_count.load();
-            while (!atomic_count.compare_exchange_weak(current_count, current_count + 1)) {}
+            local_counter++;
 
             int current_max = atomic_max.load();
             while (val > current_max && !atomic_max.compare_exchange_weak(current_max, val)) {}
         }
     }
+
+    int current_count = atomic_count.load();
+    while (!atomic_count.compare_exchange_weak(current_count, current_count + local_counter)) {}
 }
 
 void run_cas_test(const std::vector<int>& data, int num_threads) {
@@ -119,7 +121,7 @@ void run_cas_test(const std::vector<int>& data, int num_threads) {
 }
 
 int main() {
-    const size_t size = 100000;
+    const size_t size = 1000000000;
     std::vector<int> data(size);
     int num_threads = 6;
 
