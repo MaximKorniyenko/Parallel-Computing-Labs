@@ -33,13 +33,32 @@ void run_sequential_test(const std::vector<int>& data) {
     std::cout << "--- Sequential Execution  ---" << std::endl;
     std::cout << "Count: " << count << std::endl;
     std::cout << "Maximum element: " << max_val << std::endl;
-    std::cout << "Execution time: " << elapsed.count() << " ms" << std::endl;
+    std::cout << "Execution time: " << elapsed.count() << " ms\n" << std::endl;
 }
 
 void thread_worker_mutex(const std::vector<int>& data, size_t start, size_t end) {
+    int local_counter = 0;
+    int local_max = INT_MIN;
     for (size_t i = start; i < end; ++i) {
         if (data[i] % 3 == 0) {
-            std::lock_guard<std::mutex> lock(mtx);
+            local_counter++;
+            if (data[i] > local_max) {
+                local_max = data[i];
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mtx);
+    shared_count += local_counter;
+    if (local_max > shared_max) {
+        shared_max = local_max;
+    }
+}
+
+void thread_worker_mutex_heavy(const std::vector<int>& data, size_t start, size_t end) {
+    for (size_t i = start; i < end; ++i) {
+        if (data[i] % 3 == 0) {
+            std::lock_guard<std::mutex> lock(mtx); // Блокуємо на кожній ітерації!
             shared_count++;
             if (data[i] > shared_max) {
                 shared_max = data[i];
@@ -59,7 +78,7 @@ void run_mutex_test(const std::vector<int>& data, int num_threads) {
     for (int i = 0; i < num_threads; ++i) {
         size_t start = i * chunk_size;
         size_t end = (i == num_threads - 1) ? data.size() : (i + 1) * chunk_size;
-        threads.emplace_back(thread_worker_mutex, std::ref(data), start, end);
+        threads.emplace_back(thread_worker_mutex_heavy, std::ref(data), start, end);
     }
 
     for (auto& t : threads) {
@@ -73,23 +92,40 @@ void run_mutex_test(const std::vector<int>& data, int num_threads) {
     std::cout << "Threads used: " << num_threads << std::endl;
     std::cout << "Count: " << shared_count << std::endl;
     std::cout << "Maximum element: " << shared_max << std::endl;
-    std::cout << "Time: " << elapsed.count() << " ms" << std::endl;
+    std::cout << "Time: " << elapsed.count() << " ms\n" << std::endl;
 }
 
 void thread_worker_cas(const std::vector<int>& data, size_t start, size_t end) {
     int local_counter = 0;
+    int local_max = INT_MIN;
     for (size_t i = start; i < end; ++i) {
         if (data[i] % 3 == 0) {
-            int val = data[i];
             local_counter++;
 
-            int current_max = atomic_max.load();
-            while (val > current_max && !atomic_max.compare_exchange_weak(current_max, val)) {}
+            if (local_max < data[i]) {
+                local_max = data[i];
+            }
+
         }
     }
 
     int current_count = atomic_count.load();
-    while (!atomic_count.compare_exchange_weak(current_count, current_count + local_counter)) {}
+    while (!atomic_count.compare_exchange_weak(current_count, current_count + local_counter, std::memory_order_relaxed)) {}
+    int current_max = atomic_max.load();
+    while (local_max > current_max && !atomic_max.compare_exchange_weak(current_max, local_max, std::memory_order_relaxed)) {}
+}
+
+void thread_worker_cas_heavy(const std::vector<int>& data, size_t start, size_t end) {
+    for (size_t i = start; i < end; ++i) {
+        if (data[i] % 3 == 0) {
+
+            int current_count = atomic_count.load(std::memory_order_relaxed);
+            while (!atomic_count.compare_exchange_weak(current_count, current_count + 1, std::memory_order_relaxed)) {}
+
+            int current_max = atomic_max.load(std::memory_order_relaxed);
+            while (data[i] > current_max && !atomic_max.compare_exchange_weak(current_max, data[i], std::memory_order_relaxed)) {}
+        }
+    }
 }
 
 void run_cas_test(const std::vector<int>& data, int num_threads) {
@@ -103,7 +139,7 @@ void run_cas_test(const std::vector<int>& data, int num_threads) {
     for (int i = 0; i < num_threads; ++i) {
         size_t start = i * chunk_size;
         size_t end = (i == num_threads - 1) ? data.size() : (i + 1) * chunk_size;
-        threads.emplace_back(thread_worker_cas, std::ref(data), start, end);
+        threads.emplace_back(thread_worker_cas_heavy, std::ref(data), start, end);
     }
 
     for (auto& t : threads) {
@@ -117,25 +153,47 @@ void run_cas_test(const std::vector<int>& data, int num_threads) {
     std::cout << "Threads used: " << num_threads << std::endl;
     std::cout << "Count: " << atomic_count.load() << std::endl;
     std::cout << "Maximum element: " << atomic_max.load() << std::endl;
-    std::cout << "Time: " << elapsed.count() << " ms" << std::endl;
+    std::cout << "Time: " << elapsed.count() << " ms\n" << std::endl;
+}
+
+void run_benchmarks(const std::vector<int>& data) {
+    std::vector<int> thread_counts = {3, 6, 12, 24};
+
+    std::cout << "===========================================" << std::endl;
+    std::cout << "STARTING AUTOMATED BENCHMARK" << std::endl;
+    std::cout << "Data size: " << data.size() << " elements" << std::endl;
+    std::cout << "===========================================\n" << std::endl;
+
+    run_sequential_test(data);
+    std::cout << std::endl;
+
+    for (int threads : thread_counts) {
+        std::cout << ">>> TESTING WITH " << threads << " THREADS <<<" << std::endl;
+
+        run_mutex_test(data, threads);
+        run_cas_test(data, threads);
+
+        std::cout << "-------------------------------------------" << std::endl;
+    }
+
+    std::cout << "BENCHMARK COMPLETED\n" << std::endl;
 }
 
 int main() {
-    const size_t size = 1000000000;
-    std::vector<int> data(size);
-    int num_threads = 6;
+    std::vector<size_t> sizes = {100000, 1000000, 10000000, 100000000, 100000000};
 
     std::mt19937 gen(42);
     std::uniform_int_distribution<> dis(1, 1000000);
-    for (size_t i = 0; i < size; ++i) {
-        data[i] = dis(gen);
+
+    for (size_t size : sizes) {
+        std::vector<int> data(size);
+
+        for (size_t i = 0; i < size; ++i) {
+            data[i] = dis(gen);
+        }
+
+        run_benchmarks(data);
     }
-
-    run_sequential_test(data);
-
-    run_mutex_test(data, num_threads);
-
-    run_cas_test(data, num_threads);
 
     return 0;
 }
