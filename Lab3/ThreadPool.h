@@ -21,6 +21,8 @@ public:
     ThreadPoolV5() = default;
     ~ThreadPoolV5() { terminate(false); }
 
+    size_t get_queue_size(size_t queue_index) const;
+
 public:
     void initialize(size_t queues_count, size_t workers_per_queue);
     void terminate(bool wait_for_tasks = true);

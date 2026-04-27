@@ -1,5 +1,11 @@
 #include "ThreadPool.h"
 
+size_t ThreadPoolV5::get_queue_size(size_t queue_index) const {
+    std::shared_lock<std::shared_mutex> lock(lifecycle_mtx_);
+    if (queue_index >= queues_count_ || !queues_ctx_[queue_index]) return 0;
+    return queues_ctx_[queue_index]->queue.size();
+}
+
 void ThreadPoolV5::initialize(size_t queues_count, size_t workers_per_queue) {
     bool expected = false;
     if (!is_initializing_.compare_exchange_strong(expected, true)) return;
